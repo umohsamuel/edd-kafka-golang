@@ -13,12 +13,32 @@ import (
 	"github.com/IBM/sarama"
 )
 
-var (
-	ORDERS_MAIN_GROUP      = "orders-main-group"
-	ORDERS_5M_RETRY_GROUP  = "orders-retry-5m-group"
-	ORDERS_20M_RETRY_GROUP = "orders-retry-20m-group"
-	ORDERS_40M_RETRY_GROUP = "orders-retry-40m-group"
+type Topics string
+
+const (
+	ORDERS_CREATED Topics = "orders_created"
+	RETRY_5M       Topics = "retry_5m"
+	RETRY_20M      Topics = "retry_20m"
+	RETRY_40M      Topics = "retry_40m"
+	ORDERS_DLQ     Topics = "orders_dlq"
 )
+
+func (t Topics) String() string {
+	return string(t)
+}
+
+type ConsumerGroup string
+
+const (
+	ORDERS_MAIN_GROUP      ConsumerGroup = "orders_main_group"
+	ORDERS_5M_RETRY_GROUP  ConsumerGroup = "orders_retry_5m_group"
+	ORDERS_20M_RETRY_GROUP ConsumerGroup = "orders_retry_20m_group"
+	ORDERS_40M_RETRY_GROUP ConsumerGroup = "orders_retry_40m_group"
+)
+
+func (t ConsumerGroup) String() string {
+	return string(t)
+}
 
 func main() {
 	brokersUrl := []string{"localhost:9092"}
@@ -29,25 +49,25 @@ func main() {
 	}
 	defer sharedProducer.Close()
 
-	mainGroup, err := ConnectConsumerGroup(brokersUrl, ORDERS_MAIN_GROUP)
+	mainGroup, err := ConnectConsumerGroup(brokersUrl, ORDERS_MAIN_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start Main Consumer Group: %v", err)
 	}
 	defer mainGroup.Close()
 
-	retryGroup5m, err := ConnectConsumerGroup(brokersUrl, ORDERS_5M_RETRY_GROUP)
+	retryGroup5m, err := ConnectConsumerGroup(brokersUrl, ORDERS_5M_RETRY_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start 5m Retry Group: %v", err)
 	}
 	defer retryGroup5m.Close()
 
-	retryGroup20m, err := ConnectConsumerGroup(brokersUrl, ORDERS_20M_RETRY_GROUP)
+	retryGroup20m, err := ConnectConsumerGroup(brokersUrl, ORDERS_20M_RETRY_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start 20m Retry Group: %v", err)
 	}
 	defer retryGroup20m.Close()
 
-	retryGroup40m, err := ConnectConsumerGroup(brokersUrl, ORDERS_40M_RETRY_GROUP)
+	retryGroup40m, err := ConnectConsumerGroup(brokersUrl, ORDERS_40M_RETRY_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start 40m Retry Group: %v", err)
 	}
@@ -65,7 +85,7 @@ func main() {
 		}
 
 		for {
-			if err := mainGroup.Consume(ctx, []string{"orders"}, handler); err != nil {
+			if err := mainGroup.Consume(ctx, []string{ORDERS_CREATED.String()}, handler); err != nil {
 				log.Printf("Error from main consumer group: %v", err)
 			}
 
@@ -82,8 +102,8 @@ func main() {
 		}
 
 		for {
-			if err := retryGroup5m.Consume(ctx, []string{"retry_5m"}, handler); err != nil {
-				log.Printf("Error from retry_5m group: %v", err)
+			if err := retryGroup5m.Consume(ctx, []string{RETRY_5M.String()}, handler); err != nil {
+				log.Printf("Error from %s group: %v", RETRY_5M.String(), err)
 			}
 
 			if ctx.Err() != nil {
@@ -99,8 +119,8 @@ func main() {
 		}
 
 		for {
-			if err := retryGroup20m.Consume(ctx, []string{"retry_20m"}, handler); err != nil {
-				log.Printf("Error from retry_20m group: %v", err)
+			if err := retryGroup20m.Consume(ctx, []string{RETRY_20M.String()}, handler); err != nil {
+				log.Printf("Error from %s group: %v", RETRY_20M.String(), err)
 			}
 
 			if ctx.Err() != nil {
@@ -116,8 +136,8 @@ func main() {
 		}
 
 		for {
-			if err := retryGroup40m.Consume(ctx, []string{"retry_40m"}, handler); err != nil {
-				log.Printf("Error from retry_40m group: %v", err)
+			if err := retryGroup40m.Consume(ctx, []string{RETRY_40M.String()}, handler); err != nil {
+				log.Printf("Error from %s group: %v", RETRY_40M.String(), err)
 			}
 
 			if ctx.Err() != nil {
@@ -206,13 +226,13 @@ func (h *ConsumerGroupHandler) routeToNextStage(msg *sarama.ConsumerMessage) err
 	var nextTopic string
 	switch retryCount {
 	case 0:
-		nextTopic = "retry_5m"
+		nextTopic = RETRY_5M.String()
 	case 1:
-		nextTopic = "retry_20m"
+		nextTopic = RETRY_20M.String()
 	case 2:
-		nextTopic = "retry_40m"
+		nextTopic = RETRY_40M.String()
 	default:
-		nextTopic = "orders-dlq"
+		nextTopic = ORDERS_DLQ.String()
 	}
 
 	now := time.Now()
