@@ -11,34 +11,8 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/umohsamuel/edd-kafka-golang/pkg/topics"
 )
-
-type Topics string
-
-const (
-	ORDERS_CREATED Topics = "orders_created"
-	RETRY_5M       Topics = "retry_5m"
-	RETRY_20M      Topics = "retry_20m"
-	RETRY_40M      Topics = "retry_40m"
-	ORDERS_DLQ     Topics = "orders_dlq"
-)
-
-func (t Topics) String() string {
-	return string(t)
-}
-
-type ConsumerGroup string
-
-const (
-	ORDERS_MAIN_GROUP      ConsumerGroup = "orders_main_group"
-	ORDERS_5M_RETRY_GROUP  ConsumerGroup = "orders_retry_5m_group"
-	ORDERS_20M_RETRY_GROUP ConsumerGroup = "orders_retry_20m_group"
-	ORDERS_40M_RETRY_GROUP ConsumerGroup = "orders_retry_40m_group"
-)
-
-func (t ConsumerGroup) String() string {
-	return string(t)
-}
 
 func main() {
 	brokersUrl := []string{"localhost:9092"}
@@ -49,25 +23,25 @@ func main() {
 	}
 	defer sharedProducer.Close()
 
-	mainGroup, err := ConnectConsumerGroup(brokersUrl, ORDERS_MAIN_GROUP.String())
+	mainGroup, err := ConnectConsumerGroup(brokersUrl, topics.ORDERS_MAIN_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start Main Consumer Group: %v", err)
 	}
 	defer mainGroup.Close()
 
-	retryGroup5m, err := ConnectConsumerGroup(brokersUrl, ORDERS_5M_RETRY_GROUP.String())
+	retryGroup5m, err := ConnectConsumerGroup(brokersUrl, topics.ORDERS_5M_RETRY_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start 5m Retry Group: %v", err)
 	}
 	defer retryGroup5m.Close()
 
-	retryGroup20m, err := ConnectConsumerGroup(brokersUrl, ORDERS_20M_RETRY_GROUP.String())
+	retryGroup20m, err := ConnectConsumerGroup(brokersUrl, topics.ORDERS_20M_RETRY_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start 20m Retry Group: %v", err)
 	}
 	defer retryGroup20m.Close()
 
-	retryGroup40m, err := ConnectConsumerGroup(brokersUrl, ORDERS_40M_RETRY_GROUP.String())
+	retryGroup40m, err := ConnectConsumerGroup(brokersUrl, topics.ORDERS_40M_RETRY_GROUP.String())
 	if err != nil {
 		log.Fatalf("Failed to start 40m Retry Group: %v", err)
 	}
@@ -85,7 +59,7 @@ func main() {
 		}
 
 		for {
-			if err := mainGroup.Consume(ctx, []string{ORDERS_CREATED.String()}, handler); err != nil {
+			if err := mainGroup.Consume(ctx, []string{topics.ORDERS_CREATED.String()}, handler); err != nil {
 				log.Printf("Error from main consumer group: %v", err)
 			}
 
@@ -102,8 +76,8 @@ func main() {
 		}
 
 		for {
-			if err := retryGroup5m.Consume(ctx, []string{RETRY_5M.String()}, handler); err != nil {
-				log.Printf("Error from %s group: %v", RETRY_5M.String(), err)
+			if err := retryGroup5m.Consume(ctx, []string{topics.RETRY_5M.String()}, handler); err != nil {
+				log.Printf("Error from %s group: %v", topics.RETRY_5M.String(), err)
 			}
 
 			if ctx.Err() != nil {
@@ -119,8 +93,8 @@ func main() {
 		}
 
 		for {
-			if err := retryGroup20m.Consume(ctx, []string{RETRY_20M.String()}, handler); err != nil {
-				log.Printf("Error from %s group: %v", RETRY_20M.String(), err)
+			if err := retryGroup20m.Consume(ctx, []string{topics.RETRY_20M.String()}, handler); err != nil {
+				log.Printf("Error from %s group: %v", topics.RETRY_20M.String(), err)
 			}
 
 			if ctx.Err() != nil {
@@ -136,8 +110,8 @@ func main() {
 		}
 
 		for {
-			if err := retryGroup40m.Consume(ctx, []string{RETRY_40M.String()}, handler); err != nil {
-				log.Printf("Error from %s group: %v", RETRY_40M.String(), err)
+			if err := retryGroup40m.Consume(ctx, []string{topics.RETRY_40M.String()}, handler); err != nil {
+				log.Printf("Error from %s group: %v", topics.RETRY_40M.String(), err)
 			}
 
 			if ctx.Err() != nil {
@@ -226,13 +200,13 @@ func (h *ConsumerGroupHandler) routeToNextStage(msg *sarama.ConsumerMessage) err
 	var nextTopic string
 	switch retryCount {
 	case 0:
-		nextTopic = RETRY_5M.String()
+		nextTopic = topics.RETRY_5M.String()
 	case 1:
-		nextTopic = RETRY_20M.String()
+		nextTopic = topics.RETRY_20M.String()
 	case 2:
-		nextTopic = RETRY_40M.String()
+		nextTopic = topics.RETRY_40M.String()
 	default:
-		nextTopic = ORDERS_DLQ.String()
+		nextTopic = topics.ORDERS_DLQ.String()
 	}
 
 	now := time.Now()

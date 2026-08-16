@@ -8,6 +8,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/gin-gonic/gin"
+	"github.com/umohsamuel/edd-kafka-golang/pkg/topics"
 )
 
 type Order struct {
@@ -73,7 +74,7 @@ func PushOrderToQueue(producer sarama.SyncProducer, topic string, message []byte
 
 func createOrderHandler(producer sarama.SyncProducer) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		topic := "orders"
+		topic := topics.ORDERS_CREATED.String()
 		order := new(Order)
 
 		if err := c.ShouldBindJSON(&order); err != nil {
@@ -98,6 +99,5 @@ func createOrderHandler(producer sarama.SyncProducer) gin.HandlerFunc {
 			"message": "Order pushed successfully",
 			"order":   order,
 		})
-
 	}
 }
