@@ -3,7 +3,11 @@ module github.com/umohsamuel/edd-kafka-golang
 go 1.26.6
 
 require (
-	github.com/IBM/sarama v1.60.1 // indirect
+	github.com/IBM/sarama v1.60.1
+	github.com/gin-gonic/gin v1.12.0
+)
+
+require (
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.2 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
@@ -12,7 +16,6 @@ require (
 	github.com/eapache/go-resiliency v1.7.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/gin-contrib/sse v1.1.1 // indirect
-	github.com/gin-gonic/gin v1.12.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
