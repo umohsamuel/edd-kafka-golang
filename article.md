@@ -20,17 +20,17 @@ An event is a record of something that has happened in a system, typically repre
 1. A user signing up for a service.
 2. A user placing an order in your system.
 
-### Components of an EDA
+### Components of an Event-Driven Architecture
 
-To understand how events actually flow through a system, you need to know three key players:
+To understand how events flow through a system, we need to know three key players:
 
 **Event Producers**: They are the sources of events. They generate and publish events like signup events, order placed events, etc. Producers generate events and transmit them to the rest of the system. They do not know who is listening for or handling the events.
 
-**Event Brokers**: They sit between producers and consumers, decoupling them so neither needs a direct connection to the other. Brokers receive event messages, maintain their chronological order, make them available for consumption, and route them to the right consumers.
+**Event Brokers**: They sit between producers and consumers, decoupling them so neither needs a direct connection to the other. Brokers receive event messages, maintain their chronological order, make them available for consumption, and route them to the right consumers. [Apache Kafka](https://kafka.apache.org/) is an example of an event broker, and it's the one we'll use throughout this guide.
 
 **Event Consumers**: They handle the processing tasks. They listen on event channels and react when an event they are subscribed to is published, then they process the event, which can include making API calls, updating a database, triggering other events, or logging information.
 
-### How It All Flows
+### The Complete Flow
 
 With those three pieces in place, the flow of an EDA looks like this:
 
@@ -38,15 +38,13 @@ With those three pieces in place, the flow of an EDA looks like this:
 - The broker receives the event, maintains the event's order relative to others in the stream, and then routes it to the appropriate consumer.
 - An event consumer then ingests the message in real time or at a later relevant instance and processes it to trigger another action.
 
-Now that we understand the underlying architecture, let's look at the tool we will use to implement it.
-
 ## Apache Kafka, Defined
 
 Apache Kafka is an open-source, distributed, event-streaming platform used to publish, store, process, and consume real-time data streams. It is based on a publish-subscribe messaging model and is designed to support fault-tolerant, scalable, high-throughput, and low-latency data pipelines, event-driven applications, and stream-processing systems.
 
 ### Key Apache Kafka Components
 
-1. **Messages**: A unit of data comprised of two parts: a key and a value. The key is commonly used for data about the message and the value is the body of the message.
+1. **Messages**: A unit of data comprised of two parts: a key and a value. The value is the actual content being sent, while the key identifies what the message relates to.
 
 2. **Producers**: Applications that publish events or messages to Kafka topics. A producer can publish to one or more topics and can optionally choose the partition that stores the data.
 
@@ -94,7 +92,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
 ```
 
-Since the introduction of [KRaft](https://docs.confluent.io/platform/current/kafka-metadata/kraft.html) Kafka no longer requires [Apache ZooKeeper®](https://zookeeper.apache.org/) for managing cluster metadata, using Kafka itself instead. One advantage of the new KRaft mode is that you can have a single Kafka broker to handle both metadata and client requests in small, local development environment. The docker-compose.yml file for this tutorial uses this approach, leading to faster startup times and simpler configuration. Note that, in a production setting, you'll have distinct Kafka brokers for handling requests and operating as a cluster controller.
+Since the introduction of [KRaft](https://docs.confluent.io/platform/current/kafka-metadata/kraft.html), Kafka no longer requires [Apache ZooKeeper®](https://zookeeper.apache.org/) for managing cluster metadata, it uses Kafka itself instead. One advantage of the new KRaft mode is that you can have a single Kafka broker to handle both metadata and client requests in a small, local development environment. The docker-compose.yml file for this tutorial uses this approach, leading to faster startup times and simpler configuration. Note that, in a production setting, you'll have distinct Kafka brokers for handling requests and operating as a cluster controller.
 
 Start the cluster with:
 
@@ -105,6 +103,8 @@ docker compose up -d
 ## Creating the Producer
 
 Now that Kafka is running, let's build the producer side of our pipeline. The producer is responsible for receiving an order request via a REST API and publishing that event to our Kafka broker.
+
+> We'll be using Sarama throughout this guide, Sarama is an MIT-licensed Go client library for Apache Kafka.
 
 ### Connecting to Kafka
 
@@ -399,11 +399,11 @@ func ConnectProducer(brokersUrl []string) (sarama.SyncProducer, error) {
 }
 ```
 
-Pay attention to `config.Consumer.Offsets.AutoCommit.Enable = false`. By default, Sarama will automatically commit offsets in the background on a timer, which means it could mark a message as "done" before your code has actually finished processing it. If your app crashes between the auto-commit and the actual processing, that message is lost. By disabling auto-commit, we take full control of when offsets get committed. You will see this come into play shortly when we manually call `session.MarkMessage` and `session.Commit` in our handler.
+Pay attention to `config.Consumer.Offsets.AutoCommit.Enable = false`. By default, Sarama will automatically commit offsets in the background on a timer, which means it could mark a message as "done" before your code has actually finished processing it. If your app crashes between the auto-commit and the actual processing, that message is lost. By disabling auto-commit, we take full control of when offsets get committed. This means we have to manually call `session.MarkMessage` and `session.Commit` in our handler to commit an offset.
 
 ### The Main Consumer Group Handler
 
-Now our consumer group handler. This is where the processing logic lives. When a message is consumed, we attempt to process it. If processing fails, we route the message to the next retry tier:
+This is where the processing logic lives. When a message is consumed, we will attempt to process it. If processing fails, we route the message to the next retry tier:
 
 ```go
 type ConsumerGroupHandler struct {
@@ -540,8 +540,6 @@ func (h *RetryConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSes
 	return nil
 }
 ```
-
-Now, you might be wondering: does this `time.Sleep` block the entire consumer? The answer is yes and no. The sleep blocks the goroutine that this specific retry consumer is running in, so that particular consumer will not pick up the next message from its partition until the sleep finishes. However, because we launch each retry consumer group in its own separate goroutine (as you will see in the `main` function), the main consumer and the other retry consumers continue processing independently. The 5 minute retry sleeping does not hold up the 20 minute retry or the main consumer.
 
 ### Simulating Business Logic
 
@@ -886,7 +884,23 @@ curl -X POST http://localhost:8080/api/v1/order \
   -d '{"text": "New order from Lagos"}'
 ```
 
-To see the full retry flow in action, keep the `processBusinessLogic` function returning the dummy error. Send a request and watch the consumer logs as the message fails, gets routed to the 5 minute retry topic, fails again, moves to the 20 minute retry, then the 40 minute retry, and finally lands in the DLQ. Once you have seen that, toggle `processBusinessLogic` to return `nil` instead and send another request to confirm the success path works cleanly. Also notice how when you hit `Ctrl+C`, the consumer shuts down all groups gracefully without dropping any in-flight messages.
+<!-- To see the full retry flow in action, keep the `processBusinessLogic` function returning the dummy error. Send a request and watch the consumer logs as the message fails, gets routed to the 5 minute retry topic, fails again, moves to the 20 minute retry, then the 40 minute retry, and finally lands in the DLQ.
+
+Once you have seen that, toggle `processBusinessLogic` to return `nil` instead, then restart the consumer service in the terminal, and send another request to confirm the success path works cleanly.
+
+Also notice how when you hit `Ctrl+C`, the consumer shuts down all groups gracefully without dropping any in-flight messages. -->
+
+To see the full retry flow in action, keep the `processBusinessLogic` function returning the dummy error. Send a request and watch the consumer logs as the message fails, gets routed to the 5 minute retry topic, fails again, moves to the 20 minute retry, then the 40 minute retry, and finally lands in the DLQ.
+
+Once you have confirmed that flow, change `processBusinessLogic` to return `nil`, restart the consumer service, and send another request to confirm the success path works cleanly, with the message being marked and committed on the first pass.
+
+Lastly, While the consumer service is running, try hitting `Ctrl+C` as well. You should see each consumer group shut down gracefully in turn, without dropping any in-flight messages.
+
+## Demo
+
+Here is a demo of how all these concepts come together:
+
+<video src="https://res.cloudinary.com/db6nohcui/video/upload/v1786899332/c79e8f83-1540-4b9b-8262-d7b6798bea5a_edd-golang-kafka_tnlpk0.mp4" controls playsinline width="100%"></video>
 
 ## Conclusion
 
