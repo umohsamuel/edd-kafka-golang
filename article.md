@@ -92,7 +92,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
 ```
 
-Since the introduction of [KRaft](https://docs.confluent.io/platform/current/kafka-metadata/kraft.html), Kafka no longer requires [Apache ZooKeeper®](https://zookeeper.apache.org/) for managing cluster metadata, it uses Kafka itself instead. One advantage of the new KRaft mode is that you can have a single Kafka broker to handle both metadata and client requests in a small, local development environment. The docker-compose.yml file for this tutorial uses this approach, leading to faster startup times and simpler configuration. Note that, in a production setting, you'll have distinct Kafka brokers for handling requests and operating as a cluster controller.
+Since the introduction of [KRaft](https://docs.confluent.io/platform/current/kafka-metadata/kraft.html), Kafka no longer requires [Apache ZooKeeper®](https://zookeeper.apache.org/) for managing cluster metadata. It uses Kafka itself instead. One advantage of the new KRaft mode is that you can have a single Kafka broker to handle both metadata and client requests in a small, local development environment. The docker-compose.yml file for this tutorial uses this approach, leading to faster startup times and simpler configuration. Note that, in a production setting, you'll have distinct Kafka brokers for handling requests and operating as a cluster controller.
 
 Start the cluster with:
 
@@ -100,9 +100,48 @@ Start the cluster with:
 docker compose up -d
 ```
 
+## Defining Topics and Consumer Groups
+
+Before we build the producer and consumer, let's define the topics and consumer groups that both sides of our pipeline will share. We will keep these in a separate `pkg/topics` package so both the producer and consumer can import them:
+
+```go
+// pkg/topics/topics.go
+
+package topics
+
+type Topics string
+
+const (
+	ORDERS_CREATED Topics = "orders_created"
+	RETRY_5M       Topics = "retry_5m"
+	RETRY_20M      Topics = "retry_20m"
+	RETRY_40M      Topics = "retry_40m"
+	ORDERS_DLQ     Topics = "orders_dlq"
+)
+
+func (t Topics) String() string {
+	return string(t)
+}
+
+type ConsumerGroup string
+
+const (
+	ORDERS_MAIN_GROUP      ConsumerGroup = "orders_main_group"
+	ORDERS_5M_RETRY_GROUP  ConsumerGroup = "orders_retry_5m_group"
+	ORDERS_20M_RETRY_GROUP ConsumerGroup = "orders_retry_20m_group"
+	ORDERS_40M_RETRY_GROUP ConsumerGroup = "orders_retry_40m_group"
+)
+
+func (t ConsumerGroup) String() string {
+	return string(t)
+}
+```
+
+We have a main topic for fresh orders, three retry topics with increasing delays (5 minutes, 20 minutes, 40 minutes), and a dead letter queue (DLQ) for messages that have exhausted all retry attempts. The consumer groups map one-to-one with these topics so each tier has its own independent group.
+
 ## Creating the Producer
 
-Now that Kafka is running, let's build the producer side of our pipeline. The producer is responsible for receiving an order request via a REST API and publishing that event to our Kafka broker.
+Now that Kafka is running and our shared definitions are in place, let's build the producer side of our pipeline. The producer is responsible for receiving an order request via a REST API and publishing that event to our Kafka broker.
 
 > We'll be using Sarama throughout this guide, Sarama is an MIT-licensed Go client library for Apache Kafka.
 
@@ -338,43 +377,6 @@ func createOrderHandler(producer sarama.SyncProducer) gin.HandlerFunc {
 ## Creating the Consumer
 
 Now for the other side of the pipeline. The consumer listens for events on topics, processes them, and handles failures by routing messages through a tiered reprocessing system.
-
-### Defining Topics and Consumer Groups
-
-First, let's define our topics and consumer groups. We have a main topic for fresh orders, three retry topics with increasing delays, and a dead letter queue (DLQ) for messages that have exhausted all retry attempts:
-
-```go
-// pkg/topics/topics.go
-
-package topics
-
-type Topics string
-
-const (
-	ORDERS_CREATED Topics = "orders_created"
-	RETRY_5M       Topics = "retry_5m"
-	RETRY_20M      Topics = "retry_20m"
-	RETRY_40M      Topics = "retry_40m"
-	ORDERS_DLQ     Topics = "orders_dlq"
-)
-
-func (t Topics) String() string {
-	return string(t)
-}
-
-type ConsumerGroup string
-
-const (
-	ORDERS_MAIN_GROUP      ConsumerGroup = "orders_main_group"
-	ORDERS_5M_RETRY_GROUP  ConsumerGroup = "orders_retry_5m_group"
-	ORDERS_20M_RETRY_GROUP ConsumerGroup = "orders_retry_20m_group"
-	ORDERS_40M_RETRY_GROUP ConsumerGroup = "orders_retry_40m_group"
-)
-
-func (t ConsumerGroup) String() string {
-	return string(t)
-}
-```
 
 ### Connecting Consumer Groups
 
@@ -866,7 +868,7 @@ To see the full retry flow in action, keep the `processBusinessLogic` function r
 
 Once you have confirmed that flow, change `processBusinessLogic` to return `nil`, restart the consumer service, and send another request to confirm the success path works cleanly, with the message being marked and committed on the first pass.
 
-Lastly, While the consumer service is running, try hitting `Ctrl+C` as well. You should see each consumer group shut down gracefully in turn, without dropping any in-flight messages.
+Lastly, while the consumer service is running, try hitting `Ctrl+C` as well. You should see each consumer group shut down gracefully in turn, without dropping any in-flight messages.
 
 ## Demo
 
